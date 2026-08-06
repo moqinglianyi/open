@@ -1,0 +1,1 @@
+System.register(["./index-legacy-MLJFlJHe.js"],function(e,t){var n,r,i;return{setters:[function(e){n=e.En,r=e.Zo,i=e.da}],execute:function(){e("t",e=>{let t;return"responsive"===n("settings_layout")&&(t="repeat(auto-fill, minmax(424px, 1fr))"),r(i,{w:"$full",gap:"$2",templateColumns:{"@initial":"1fr","@lg":t},get children(){return e.children}})})}}});

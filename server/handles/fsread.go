@@ -109,8 +109,9 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
 	var directUploadTools []string
-	if canWriteContentAtPath {
-		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+	if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+		provider = storage.Config().Name
+		if canWriteContentAtPath {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}
 	}
@@ -286,7 +287,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	common.LogMediaAccess(c, reqPath)
+	common.LogMediaAccess(c, reqPath, user.Username)
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		common.ErrorResp(c, err, 500, true)
@@ -398,6 +399,15 @@ type FsOtherReq struct {
 	Password string `json:"password" form:"password"`
 }
 
+// adminOnly115Methods lists fs/other methods that only admin may call.
+var adminOnly115Methods = map[string]bool{
+	"generate_cover": true,
+	"offline_list":   true,
+	"offline_add":    true,
+	"offline_delete": true,
+	"offline_clear":  true,
+}
+
 func FsOther(c *gin.Context) {
 	var req FsOtherReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -405,6 +415,11 @@ func FsOther(c *gin.Context) {
 		return
 	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	// The 115 Cloud-specific methods require admin access.
+	if adminOnly115Methods[req.Method] && !user.IsAdmin() {
+		common.ErrorStrResp(c, "admin privilege required", 403)
+		return
+	}
 	var err error
 	req.Path, err = user.JoinPath(req.Path)
 	if err != nil {

@@ -204,12 +204,15 @@ func (d *Pan115) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 	// rapid-upload
 	// note that 115 add timeout for rapid-upload,
 	// and "sig invalid" err is thrown even when the hash is correct after timeout.
-	if fastInfo, err = d.rapidUpload(stream.GetSize(), stream.GetName(), dirID, preHash, fullHash, stream); err != nil {
+	if fastInfo, err = d.rapidUpload(ctx, stream.GetSize(), stream.GetName(), dirID, preHash, fullHash, stream); err != nil {
 		return nil, err
 	}
 	if matched, err := fastInfo.Ok(); err != nil {
 		return nil, err
 	} else if matched {
+		if err := d.WaitLimit(ctx); err != nil {
+			return nil, err
+		}
 		f, err := d.getNewFileByPickCode(fastInfo.PickCode)
 		if err != nil {
 			return nil, nil
@@ -230,6 +233,9 @@ func (d *Pan115) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 		}
 	}
 
+	if err := d.WaitLimit(ctx); err != nil {
+		return nil, err
+	}
 	file, err := d.getNewFile(uploadResult.Data.FileID)
 	if err != nil {
 		return nil, nil
