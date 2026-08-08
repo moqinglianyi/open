@@ -1,1 +1,0 @@
-import{En as e,Zo as t,da as n}from"./index-D3WuY9oE.js";var r=r=>{let i=e(`settings_layout`),a;return i===`responsive`&&(a=`repeat(auto-fill, minmax(424px, 1fr))`),t(n,{w:`$full`,gap:`$2`,templateColumns:{"@initial":`1fr`,"@lg":a},get children(){return r.children}})};export{r as t};
