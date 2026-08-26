@@ -1,1 +1,0 @@
-System.register(["./index-legacy-CS_U-bP5.js"],function(e,t){var n,r,c,o,u,i;return{setters:[function(e){n=e.Oi,r=e.Rn,c=e.Zo,o=e.er,u=e.fn,i=e.ft}],execute:function(){e("default",()=>{const[e]=o();return c(u,{get loading(){return e.loading},get children(){return c(i,{class:"word-wrap",get children(){return e()?.content},get ext(){return n(r.obj.name)},toc:!0})}})})}}});

@@ -36,14 +36,20 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 	}
 	_ = countAccess(c.ClientIP(), s)
 	url := ""
+	fakePath := fmt.Sprintf("/%s/%s", sid, path)
 	if !obj.IsDir() {
-		fakePath := fmt.Sprintf("/%s/%s", sid, path)
 		url = fmt.Sprintf("%s/sd%s", common.GetApiUrl(c), utils.EncodePath(fakePath, true))
+		sep := "?"
+		if common.WantsRawRendition(obj) {
+			// The viewer gets the JPEG extracted from the RAW photo; the download
+			// link built by the client stays pointed at the original file.
+			url += sep + "type=" + op.LinkTypePreview
+			sep = "&"
+		}
 		if s.Pwd != "" {
-			url += "?pwd=" + s.Pwd
+			url += sep + "pwd=" + s.Pwd
 		}
 	}
-	thumb, _ := model.GetThumb(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
 			Name:        obj.GetName(),
@@ -55,7 +61,7 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 			HashInfo:    obj.GetHash().Export(),
 			Sign:        "",
 			Type:        utils.GetFileType(obj.GetName()),
-			Thumb:       thumb,
+			Thumb:       common.SharingThumbURL(c, fakePath, s.Pwd, obj),
 		},
 		RawURL:   url,
 		Readme:   s.Readme,
@@ -82,7 +88,7 @@ func SharingList(c *gin.Context, req *ListReq) {
 	total, objs := pagination(objs, &req.PageReq)
 	common.SuccessResp(c, FsListResp{
 		Content: utils.MustSliceConvert(objs, func(obj model.Obj) ObjResp {
-			thumb, _ := model.GetThumb(obj)
+			fakePath := "/" + sid + stdpath.Join("/", path, obj.GetName())
 			return ObjResp{
 				Name:        obj.GetName(),
 				Size:        obj.GetSize(),
@@ -92,7 +98,7 @@ func SharingList(c *gin.Context, req *ListReq) {
 				HashInfoStr: obj.GetHash().String(),
 				HashInfo:    obj.GetHash().Export(),
 				Sign:        "",
-				Thumb:       thumb,
+				Thumb:       common.SharingThumbURL(c, fakePath, s.Pwd, obj),
 				Type:        utils.GetObjType(obj.GetName(), obj.IsDir()),
 			}
 		}),
@@ -216,7 +222,28 @@ func SharingDown(c *gin.Context) {
 	if dealErrorPage(c, err) {
 		return
 	}
-	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
+	filename := stdpath.Base(actualPath)
+	// A rendition is derived from a few byte ranges of the original, so it is
+	// always served from here, whatever the share's proxy settings say.
+	linkType := rawLinkType(c, filename)
+	if op.IsRenditionType(linkType) {
+		link, obj, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{
+			IP:     c.ClientIP(),
+			Header: c.Request.Header,
+			Type:   linkType,
+		})
+		if err != nil {
+			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
+			return
+		}
+		if common.IsGeneratedLink(link) {
+			_ = countAccess(c.ClientIP(), s)
+			proxy(c, link, obj, storage.GetStorage().ProxyRange)
+			return
+		}
+		link.Close()
+	}
+	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, filename) {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath); url != "" {
 				c.Redirect(302, url)

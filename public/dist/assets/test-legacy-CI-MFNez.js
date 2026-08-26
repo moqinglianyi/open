@@ -1,1 +1,0 @@
-System.register(["./index-legacy-CS_U-bP5.js","./Upload-legacy-C008kzB8.js"],function(e,t){var n,r,u,c;return{setters:[function(e){n=e.Gi,r=e.Zo,u=e._o},function(e){c=e.default}],execute:function(){e("default",()=>r(u,{justifyContent:"center",h:"100vh",get children(){return r(n,{w:"$md",get children(){return r(c,{})}})}}))}}});

@@ -35,3 +35,9 @@ output/
 !/public/dist/
 !/public/dist/**
 
+# Compiled server binaries (exceed GitHub's 100MB file limit; build from source)
+/openlist
+/openlist-linux-*
+/openlist-darwin-*
+/openlist-windows-*
+

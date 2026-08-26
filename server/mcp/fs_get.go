@@ -74,7 +74,6 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 	}
 
 	parentMeta, _ := op.GetNearestMeta(parentPath)
-	thumb, _ := model.GetThumb(obj)
 	mountDetails, _ := model.GetStorageDetails(obj)
 	return handles.FsGetResp{
 		ObjResp: handles.ObjResp{
@@ -84,7 +83,7 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 			Modified:     obj.ModTime(),
 			Created:      obj.CreateTime(),
 			Sign:         common.Sign(obj, parentPath, isEncrypt(meta, reqPath)),
-			Thumb:        thumb,
+			Thumb:        common.ThumbURL(ctx, parentPath, obj),
 			Type:         utils.GetFileType(obj.GetName()),
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),
@@ -94,7 +93,7 @@ func (s *Server) callFSGet(c *gin.Context, raw json.RawMessage) (any, *rpcError)
 		Readme:   getReadme(meta, reqPath),
 		Header:   getHeader(meta, reqPath),
 		Provider: provider,
-		Related:  toObjResp(related, parentPath, isEncrypt(parentMeta, parentPath)),
+		Related:  toObjResp(ctx, related, parentPath, isEncrypt(parentMeta, parentPath)),
 	}, nil
 }
 

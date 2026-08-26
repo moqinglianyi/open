@@ -85,6 +85,14 @@ func attachHeader(w http.ResponseWriter, file model.Obj, link *model.Link) {
 	} else {
 		w.Header().Set("Content-Type", utils.GetMimeType(fileName))
 	}
+	// A derived image (the JPEG extracted from a RAW photo) is not the file the
+	// path names, so it brings its own disposition and validator along.
+	if v := link.Header.Get("Content-Disposition"); v != "" {
+		w.Header().Set("Content-Disposition", v)
+	}
+	if v := link.Header.Get("Etag"); v != "" {
+		w.Header().Set("Etag", v)
+	}
 }
 func GetEtag(file model.Obj, size int64) string {
 	hash := ""

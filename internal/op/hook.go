@@ -3,11 +3,14 @@ package op
 import (
 	"context"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/rawpreview"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -43,7 +46,7 @@ var settingItemHooks = map[string]SettingItemHook{
 		return nil
 	},
 	conf.ImageTypes: func(item *model.SettingItem) error {
-		conf.SlicesMap[conf.ImageTypes] = strings.Split(item.Value, ",")
+		applyImageTypes(item.Value)
 		return nil
 	},
 	conf.TextTypes: func(item *model.SettingItem) error {
@@ -83,10 +86,79 @@ var settingItemHooks = map[string]SettingItemHook{
 		conf.SlicesMap[conf.IgnoreDirectLinkParams] = strings.Split(item.Value, ",")
 		return nil
 	},
+	conf.RawPreviewEnabled: func(item *model.SettingItem) error {
+		rawpreview.SetEnabled(item.Value == "true")
+		reapplyImageTypes()
+		return nil
+	},
+	conf.RawPreviewNegotiate: func(item *model.SettingItem) error {
+		rawpreview.SetNegotiate(item.Value == "true")
+		return nil
+	},
+	conf.RawPreviewTypes: func(item *model.SettingItem) error {
+		rawpreview.SetExtensions(strings.Split(item.Value, ","))
+		reapplyImageTypes()
+		return nil
+	},
+	conf.RawPreviewThumbSize: func(item *model.SettingItem) error {
+		px, err := strconv.Atoi(strings.TrimSpace(item.Value))
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		rawpreview.SetThumbSize(px)
+		RawPreviewCacheClear()
+		return nil
+	},
+	conf.RawPreviewMaxSize: func(item *model.SettingItem) error {
+		mb, err := strconv.Atoi(strings.TrimSpace(item.Value))
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		rawpreview.SetMaxPreviewBytes(int64(mb) << 20)
+		return nil
+	},
+	conf.RawPreviewCacheSize: func(item *model.SettingItem) error {
+		mb, err := strconv.Atoi(strings.TrimSpace(item.Value))
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		rawpreview.SetCacheBytes(int64(mb) << 20)
+		return nil
+	},
 }
 
 func RegisterSettingItemHook(key string, hook SettingItemHook) {
 	settingItemHooks[key] = hook
+}
+
+// imageTypesValue keeps the raw image_types setting so the published list can be
+// recomputed when the RAW preview settings change.
+var imageTypesValue atomic.Pointer[string]
+
+// applyImageTypes publishes the image extension list. While RAW preview
+// extraction is on, the camera RAW extensions are added to it, so RAW photos are
+// typed as images without the operator having to edit image_types by hand.
+func applyImageTypes(value string) {
+	imageTypesValue.Store(&value)
+	types := strings.Split(value, ",")
+	if rawpreview.Enabled() {
+		seen := make(map[string]struct{}, len(types))
+		for _, t := range types {
+			seen[strings.ToLower(strings.TrimSpace(t))] = struct{}{}
+		}
+		for _, e := range rawpreview.Extensions() {
+			if _, ok := seen[e]; !ok {
+				types = append(types, e)
+			}
+		}
+	}
+	conf.SlicesMap[conf.ImageTypes] = types
+}
+
+func reapplyImageTypes() {
+	if v := imageTypesValue.Load(); v != nil {
+		applyImageTypes(*v)
+	}
 }
 
 func HandleSettingItemHook(item *model.SettingItem) (hasHook bool, err error) {
