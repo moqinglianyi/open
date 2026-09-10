@@ -155,6 +155,10 @@ func applyImageTypes(value string) {
 	conf.SlicesMap[conf.ImageTypes] = types
 }
 
+// reapplyImageTypes republishes the list from the stored image_types value. The
+// RAW preview hooks call it because turning extraction on or off, or changing
+// the RAW extension list, changes what counts as an image. It is a no-op until
+// the image_types hook has run once.
 func reapplyImageTypes() {
 	if v := imageTypesValue.Load(); v != nil {
 		applyImageTypes(*v)

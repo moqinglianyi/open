@@ -280,4 +280,3 @@ func TestAcceptsImageOnly(t *testing.T) {
 		})
 	}
 }
-

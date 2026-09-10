@@ -1,10 +1,23 @@
-// Package rawpreview extracts the JPEG renditions that camera RAW files embed,
-// so browsers (which cannot decode RAW) can display them.
+// Package rawpreview 从相机 RAW 文件里找出并取出它内嵌的 JPEG，好让解不了 RAW 的
+// 浏览器有东西可显示。
 //
-// Every consumer camera RAW container carries at least one full JPEG rendition
-// of the shot. Locating it only requires reading container metadata, so a
-// preview can be produced from a remote file with a handful of HTTP range
-// requests instead of downloading the whole 20-150 MiB original.
+// 每种消费级相机的 RAW 容器里都至少存着一张完整的 JPEG 预览，而找到它只需要读容器的
+// 元数据，所以哪怕文件在网盘上、有 20-150 MiB，也只要几次 HTTP 分段请求就能拿到预览，
+// 不必把原文件整个下载下来。
+//
+// 包内分工：
+//
+//	rawpreview.go  设置开关（扩展名清单、缩略图边长、各种上限）与扩展名判断
+//	extract.go     总入口 FindPreviews / Locate，候选的整理与挑选（Pick）
+//	containers.go  非 TIFF 系容器：Fujifilm RAF、Canon CR3/CRW、Minolta MRW、Sigma X3F
+//	tiff.go        TIFF/EXIF 的头部与 IFD 读取
+//	tiff_walk.go   遍历 TIFF 系容器（CR2、NEF、ARW、DNG、RW2、ORF…）的 IFD 树找预览
+//	jpeg.go        顺着 JPEG 的 marker 走，量出长度、尺寸、EXIF 方向和内嵌小图
+//	reader.go      把「按区间读」包装成随机读：块对齐、合并请求、缓存并统计流量
+//	thumb.go       把取出来的 JPEG 缩成列表页要的小图
+//
+// 除本包注释外，包内注释保持英文：那些代码逐行对应各家 RAW 容器的二进制格式，
+// 术语（SOI、EOI、IFD、BMFF、CIFF…）本身也是英文的。
 package rawpreview
 
 import (
@@ -12,7 +25,7 @@ import (
 	"sync/atomic"
 )
 
-// DefaultExtensions lists the RAW containers handled by this package.
+// DefaultExtensions 是本包默认认得的 RAW 扩展名，管理员可以在设置里改。
 var DefaultExtensions = []string{
 	"3fr", "ari", "arw", "bay", "cap", "cr2", "cr3", "crw", "dcr", "dcs",
 	"dng", "drf", "eip", "erf", "fff", "gpr", "iiq", "k25", "kdc", "mdc",
@@ -20,16 +33,17 @@ var DefaultExtensions = []string{
 	"pxn", "raf", "raw", "rw2", "rwl", "rwz", "sr2", "srf", "srw", "x3f",
 }
 
-// Limits that bound how much of a remote file the parsers may touch.
+// 解析过程最多能碰多少字节。远端文件是按区间请求读的，所以这两个数字直接决定一次
+// 预览最多花掉多少流量。
 const (
-	// MaxParseBytes caps the total bytes read while locating a preview.
+	// MaxParseBytes 是定位一张预览期间允许读的总字节数。
 	MaxParseBytes = 24 << 20
-	// MaxScanBytes caps the brute force SOI search used as a last resort.
+	// MaxScanBytes 是实在解析不了容器、退化成暴力搜 SOI 标记时的搜索范围上限。
 	MaxScanBytes = 8 << 20
-	// MinPreviewEdge rejects candidates too small to be useful as a big image.
-	MinPreviewEdge = 160
 )
 
+// settings 是一份设置快照：所有字段一起换。读的时候不用加锁，也不会撞上改了一半的
+// 状态；要改就复制一份、改完再原子地换上去（见 mutate）。
 type settings struct {
 	enabled    bool
 	negotiate  bool
@@ -41,6 +55,8 @@ type settings struct {
 
 var current atomic.Pointer[settings]
 
+// 先摆上一套和 internal/bootstrap/data 里默认值一致的设置，这样数据库还没读进来时
+// （比如单元测试里）本包也是能用的。
 func init() {
 	s := &settings{
 		enabled:    true,
@@ -53,6 +69,7 @@ func init() {
 	current.Store(s)
 }
 
+// toSet 把扩展名清单整理成集合：小写、去掉空白和前面的点。
 func toSet(exts []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(exts))
 	for _, e := range exts {
@@ -66,6 +83,7 @@ func toSet(exts []string) map[string]struct{} {
 
 func load() *settings { return current.Load() }
 
+// mutate 复制当前设置、改其中一处、再原子换上。CAS 失败说明有人同时也在改，重来一遍。
 func mutate(fn func(*settings)) {
 	for {
 		old := current.Load()
@@ -77,14 +95,16 @@ func mutate(fn func(*settings)) {
 	}
 }
 
-// SetEnabled turns embedded preview extraction on or off.
+// 下面这些 Set 由 internal/op 的设置钩子调用，值都在这里夹到合理范围，免得后面每处
+// 用到的地方都得再防一遍。
+
+// SetEnabled 打开或关掉内嵌预览提取。
 func SetEnabled(v bool) { mutate(func(s *settings) { s.enabled = v }) }
 
-// SetNegotiate controls Accept header based content negotiation on /d and /p.
+// SetNegotiate 控制 /d 和 /p 上要不要按 Accept 头做内容协商。
 func SetNegotiate(v bool) { mutate(func(s *settings) { s.negotiate = v }) }
 
-// SetExtensions replaces the recognised RAW extension list. An empty list
-// restores the built in defaults.
+// SetExtensions 替换认得的 RAW 扩展名清单，传空清单则恢复内置默认值。
 func SetExtensions(exts []string) {
 	set := toSet(exts)
 	if len(set) == 0 {
@@ -93,7 +113,7 @@ func SetExtensions(exts []string) {
 	mutate(func(s *settings) { s.extensions = set })
 }
 
-// SetThumbSize sets the long edge, in pixels, of generated grid thumbnails.
+// SetThumbSize 设置生成的列表缩略图长边有多少像素。
 func SetThumbSize(px int) {
 	if px < 32 {
 		px = 32
@@ -103,7 +123,7 @@ func SetThumbSize(px int) {
 	mutate(func(s *settings) { s.thumbSize = px })
 }
 
-// SetMaxPreviewBytes caps the size of an embedded JPEG served as a big image.
+// SetMaxPreviewBytes 限制当作大图发出去的内嵌 JPEG 有多大。
 func SetMaxPreviewBytes(n int64) {
 	if n < 256<<10 {
 		n = 256 << 10
@@ -111,7 +131,7 @@ func SetMaxPreviewBytes(n int64) {
 	mutate(func(s *settings) { s.maxBytes = n })
 }
 
-// SetCacheBytes caps the in memory cache holding generated thumbnails.
+// SetCacheBytes 限制存放缩略图的内存缓存有多大，0 表示不缓存。
 func SetCacheBytes(n int64) {
 	if n < 0 {
 		n = 0
@@ -119,22 +139,23 @@ func SetCacheBytes(n int64) {
 	mutate(func(s *settings) { s.cacheBytes = n })
 }
 
-// Enabled reports whether RAW preview extraction is active.
+// Enabled 报告内嵌预览提取是否开着。
 func Enabled() bool { return load().enabled }
 
-// Negotiate reports whether Accept header negotiation is active.
+// Negotiate 报告 Accept 内容协商是否开着。总开关一关，协商也跟着作废。
 func Negotiate() bool { s := load(); return s.enabled && s.negotiate }
 
-// ThumbSize returns the configured thumbnail long edge in pixels.
+// ThumbSize 返回设置里的缩略图长边像素数。
 func ThumbSize() int { return load().thumbSize }
 
-// MaxPreviewBytes returns the configured big image size cap.
+// MaxPreviewBytes 返回设置里的大图大小上限。
 func MaxPreviewBytes() int64 { return load().maxBytes }
 
-// CacheBytes returns the configured thumbnail cache size.
+// CacheBytes 返回设置里的缩略图缓存上限。
 func CacheBytes() int64 { return load().cacheBytes }
 
-// Extensions returns the recognised RAW extensions, lower case, without dots.
+// Extensions 返回认得的 RAW 扩展名，小写、不带点。internal/op 用它把这些扩展名并进
+// image_types，好让 RAW 照片在前端就是「图片」。
 func Extensions() []string {
 	s := load()
 	out := make([]string, 0, len(s.extensions))
@@ -144,16 +165,21 @@ func Extensions() []string {
 	return out
 }
 
-// IsRaw reports whether name has a recognised RAW extension. It does not
-// consult the setting switch, so callers can test the name independently.
-func IsRaw(name string) bool {
+// extOf 取出文件名的扩展名，小写、不带点；没有扩展名时返回空串。
+func extOf(name string) string {
 	i := strings.LastIndexByte(name, '.')
 	if i < 0 {
-		return false
+		return ""
 	}
-	_, ok := load().extensions[strings.ToLower(name[i+1:])]
+	return strings.ToLower(name[i+1:])
+}
+
+// IsRaw 判断 name 的扩展名是不是认得的 RAW 格式。它不看总开关，所以关掉预览之后，
+// 「这仍然是个 RAW 文件名」这件事照样问得出来。
+func IsRaw(name string) bool {
+	_, ok := load().extensions[extOf(name)]
 	return ok
 }
 
-// Handles reports whether this package should take over previews for name.
+// Handles 判断 name 的预览该不该由本包接手：既是 RAW，开关也开着。
 func Handles(name string) bool { return load().enabled && IsRaw(name) }

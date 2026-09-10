@@ -140,4 +140,3 @@ func TestRawLinkTypeSettings(t *testing.T) {
 		}
 	})
 }
-
