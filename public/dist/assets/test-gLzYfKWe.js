@@ -1,1 +1,0 @@
-import{Yi as e,ts as t,xo as n}from"./index-CoD5_LML.js";import r from"./Upload-CJ2YZyMd.js";var i=()=>t(n,{justifyContent:`center`,h:`100vh`,get children(){return t(e,{w:`$md`,get children(){return t(r,{})}})}});export{i as default};
