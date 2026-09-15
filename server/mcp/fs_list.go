@@ -70,7 +70,7 @@ func (s *Server) callFSList(c *gin.Context, raw json.RawMessage) (any, *rpcError
 
 	total, paged := paginateObjs(objs, args.Page, args.PerPage)
 	return handles.FsListResp{
-		Content:            toObjResp(paged, reqPath, isEncrypt(meta, reqPath)),
+		Content:            toObjResp(ctx, paged, reqPath, isEncrypt(meta, reqPath)),
 		Total:              int64(total),
 		Write:              write,
 		WriteContentBypass: writeContentBypass,
@@ -135,10 +135,9 @@ func paginateObjs(objs []model.Obj, page, perPage int) (int, []model.Obj) {
 	return total, objs[start:end]
 }
 
-func toObjResp(objs []model.Obj, parent string, encrypt bool) []handles.ObjResp {
+func toObjResp(ctx context.Context, objs []model.Obj, parent string, encrypt bool) []handles.ObjResp {
 	resp := make([]handles.ObjResp, 0, len(objs))
 	for _, obj := range objs {
-		thumb, _ := model.GetThumb(obj)
 		mountDetails, _ := model.GetStorageDetails(obj)
 		resp = append(resp, handles.ObjResp{
 			Name:         obj.GetName(),
@@ -147,7 +146,7 @@ func toObjResp(objs []model.Obj, parent string, encrypt bool) []handles.ObjResp 
 			Modified:     obj.ModTime(),
 			Created:      obj.CreateTime(),
 			Sign:         common.Sign(obj, parent, encrypt),
-			Thumb:        thumb,
+			Thumb:        common.ThumbURL(ctx, parent, obj),
 			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),

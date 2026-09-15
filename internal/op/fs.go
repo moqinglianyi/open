@@ -257,9 +257,14 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, errors.WithStack(errs.NotFile)
 		}
 
-		link, err := storage.Link(ctx, file, args)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed get link")
+		// RAW photos carry an embedded JPEG rendition; serve that instead of a
+		// file no browser can decode. Falls through when extraction fails.
+		link := rawRenditionLink(ctx, storage, path, file, args)
+		if link == nil {
+			link, err = storage.Link(ctx, file, args)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed get link")
+			}
 		}
 		ol := &objWithLink{link: link, obj: file}
 		if link.Expiration != nil {

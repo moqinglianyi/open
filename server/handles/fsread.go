@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"context"
 	"fmt"
 	stdpath "path"
 	"strings"
@@ -109,13 +110,14 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
 	var directUploadTools []string
-	if canWriteContentAtPath {
-		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+	if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+		provider = storage.Config().Name
+		if canWriteContentAtPath {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}
 	}
 	common.SuccessResp(c, FsListResp{
-		Content:            toObjsResp(objs, reqPath, isEncrypt(meta, reqPath)),
+		Content:            toObjsResp(c, objs, reqPath, isEncrypt(meta, reqPath)),
 		Total:              int64(total),
 		Readme:             getReadme(meta, reqPath),
 		Header:             getHeader(meta, reqPath),
@@ -225,10 +227,9 @@ func pagination(objs []model.Obj, req *model.PageReq) (int, []model.Obj) {
 	return total, objs[start:end]
 }
 
-func toObjsResp(objs []model.Obj, parent string, encrypt bool) []ObjResp {
+func toObjsResp(ctx context.Context, objs []model.Obj, parent string, encrypt bool) []ObjResp {
 	var resp []ObjResp
 	for _, obj := range objs {
-		thumb, _ := model.GetThumb(obj)
 		mountDetails, _ := model.GetStorageDetails(obj)
 		resp = append(resp, ObjResp{
 			Name:         obj.GetName(),
@@ -239,7 +240,7 @@ func toObjsResp(objs []model.Obj, parent string, encrypt bool) []ObjResp {
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),
 			Sign:         common.Sign(obj, parent, encrypt),
-			Thumb:        thumb,
+			Thumb:        common.ThumbURL(ctx, parent, obj),
 			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			MountDetails: mountDetails,
 		})
@@ -286,6 +287,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
+	common.LogMediaAccess(c, reqPath, user.Username)
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 		common.ErrorResp(c, err, 500, true)
@@ -315,7 +317,13 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			common.ErrorResp(c, err, 500)
 			return
 		}
-		if storage.Config().MustProxy() || storage.GetStorage().WebProxy {
+		switch {
+		case common.WantsRawRendition(obj):
+			// No browser can decode a RAW photo, so the viewer is pointed at the
+			// JPEG rendition extracted from it. Download links are unaffected and
+			// still hand out the original file.
+			rawURL = common.RawRenditionURL(c, reqPath, op.LinkTypePreview)
+		case storage.Config().MustProxy() || storage.GetStorage().WebProxy:
 			rawURL = common.GenerateDownProxyURL(storage.GetStorage(), reqPath)
 			if rawURL == "" {
 				query := ""
@@ -327,7 +335,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 					utils.EncodePath(reqPath, true),
 					query)
 			}
-		} else {
+		default:
 			// file have raw url
 			if url, ok := model.GetUrl(obj); ok {
 				rawURL = url
@@ -354,7 +362,6 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		related = filterRelated(sameLevelFiles, obj)
 	}
 	parentMeta, _ := op.GetNearestMeta(parentPath)
-	thumb, _ := model.GetThumb(obj)
 	mountDetails, _ := model.GetStorageDetails(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
@@ -367,14 +374,14 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			HashInfo:     obj.GetHash().Export(),
 			Sign:         common.Sign(obj, parentPath, isEncrypt(meta, reqPath)),
 			Type:         utils.GetFileType(obj.GetName()),
-			Thumb:        thumb,
+			Thumb:        common.ThumbURL(c, parentPath, obj),
 			MountDetails: mountDetails,
 		},
 		RawURL:   rawURL,
 		Readme:   getReadme(meta, reqPath),
 		Header:   getHeader(meta, reqPath),
 		Provider: provider,
-		Related:  toObjsResp(related, parentPath, isEncrypt(parentMeta, parentPath)),
+		Related:  toObjsResp(c, related, parentPath, isEncrypt(parentMeta, parentPath)),
 	})
 }
 
@@ -397,6 +404,15 @@ type FsOtherReq struct {
 	Password string `json:"password" form:"password"`
 }
 
+// adminOnly115Methods lists fs/other methods that only admin may call.
+var adminOnly115Methods = map[string]bool{
+	"generate_cover": true,
+	"offline_list":   true,
+	"offline_add":    true,
+	"offline_delete": true,
+	"offline_clear":  true,
+}
+
 func FsOther(c *gin.Context) {
 	var req FsOtherReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -404,6 +420,11 @@ func FsOther(c *gin.Context) {
 		return
 	}
 	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	// The 115 Cloud-specific methods require admin access.
+	if adminOnly115Methods[req.Method] && !user.IsAdmin() {
+		common.ErrorStrResp(c, "admin privilege required", 403)
+		return
+	}
 	var err error
 	req.Path, err = user.JoinPath(req.Path)
 	if err != nil {

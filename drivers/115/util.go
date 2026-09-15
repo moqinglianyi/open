@@ -113,7 +113,7 @@ func (c *Pan115) GenerateToken(fileID, preID, timeStamp, fileSize, signKey, sign
 	return hex.EncodeToString(tokenMd5[:])
 }
 
-func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID string, stream model.FileStreamer) (*driver115.UploadInitResp, error) {
+func (d *Pan115) rapidUpload(ctx context.Context, fileSize int64, fileName, dirID, preID, fileID string, stream model.FileStreamer) (*driver115.UploadInitResp, error) {
 	var (
 		ecdhCipher   *cipher.EcdhCipher
 		encrypted    []byte
@@ -139,6 +139,7 @@ func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID stri
 	form.Set("fileid", fileID)
 	form.Set("target", target)
 	form.Set("sig", d.client.GenerateSignature(fileID, target))
+	form.Set("topupload", "true")
 
 	signKey, signVal := "", ""
 	for retry := true; retry; {
@@ -167,6 +168,9 @@ func (d *Pan115) rapidUpload(fileSize int64, fileName, dirID, preID, fileID stri
 			SetBody(encrypted).
 			SetHeaderVerbatim("Content-Type", "application/x-www-form-urlencoded").
 			SetDoNotParseResponse(true)
+		if err = d.WaitLimit(ctx); err != nil {
+			return nil, err
+		}
 		resp, err := req.Post(driver115.ApiUploadInit)
 		if err != nil {
 			return nil, err
@@ -219,6 +223,9 @@ func UploadDigestRange(stream model.FileStreamer, rangeSpec string) (result stri
 
 // UploadByOSS use aliyun sdk to upload
 func (c *Pan115) UploadByOSS(ctx context.Context, params *driver115.UploadOSSParams, s model.FileStreamer, dirID string, up driver.UpdateProgress) (*UploadResult, error) {
+	if err := c.WaitLimit(ctx); err != nil {
+		return nil, err
+	}
 	ossToken, err := c.client.GetOSSToken()
 	if err != nil {
 		return nil, err
@@ -280,6 +287,9 @@ func (d *Pan115) UploadByMultipart(ctx context.Context, params *driver115.Upload
 	// oss 启用Sequential必须按顺序上传
 	options.ThreadsNum = 1
 
+	if err = d.WaitLimit(ctx); err != nil {
+		return nil, err
+	}
 	if ossToken, err = d.client.GetOSSToken(); err != nil {
 		return nil, err
 	}
@@ -341,6 +351,10 @@ func (d *Pan115) UploadByMultipart(ctx context.Context, params *driver115.Upload
 					case <-ctx.Done():
 						break
 					case <-ticker.C:
+						if err = d.WaitLimit(ctx); err != nil {
+							errCh <- err
+							continue
+						}
 						if ossToken, err = d.client.GetOSSToken(); err != nil { // 到时重新获取ossToken
 							errCh <- errors.Wrap(err, "刷新token时出现错误")
 						}
@@ -376,6 +390,9 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
+			if err = d.WaitLimit(ctx); err != nil {
+				return nil, err
+			}
 			// 到时重新获取ossToken
 			if ossToken, err = d.client.GetOSSToken(); err != nil {
 				return nil, err

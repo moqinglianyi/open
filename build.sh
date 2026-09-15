@@ -6,6 +6,11 @@ gitCommit=$(git log --pretty=format:"%h" -1)
 
 # Set frontend repository, default to OpenListTeam/OpenList-Frontend
 frontendRepo="${FRONTEND_REPO:-OpenListTeam/OpenList-Frontend}"
+useEmbeddedWeb=false
+if [ "${USE_EMBEDDED_WEB:-}" = "1" ] || [ "${USE_EMBEDDED_WEB:-}" = "true" ]; then
+  useEmbeddedWeb=true
+fi
+embeddedWebVersion="${WEB_VERSION:-v4.2.3-dplayer-seek-mobile-nativefullscreen}"
 
 githubAuthArgs=""
 if [ -n "$GITHUB_TOKEN" ]; then
@@ -28,7 +33,11 @@ else
   git tag -d beta || true
   # Always true if there's no tag
   version=$(git describe --abbrev=0 --tags 2>/dev/null || echo "v0.0.0")
-  webVersion=$(eval "curl -fsSL --max-time 2 $githubAuthArgs \"https://api.github.com/repos/$frontendRepo/releases/latest\"" | grep "tag_name" | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//g;s/ //g')
+  if [ "$useEmbeddedWeb" = true ]; then
+    webVersion="$embeddedWebVersion"
+  else
+    webVersion=$(eval "curl -fsSL --max-time 2 $githubAuthArgs \"https://api.github.com/repos/$frontendRepo/releases/latest\"" | grep "tag_name" | head -n 1 | awk -F ":" '{print $2}' | sed 's/\"//g;s/,//g;s/ //g')
+  fi
 fi
 
 echo "backend version: $version"
@@ -37,6 +46,10 @@ if [ "$useLite" = true ]; then
   echo "using lite frontend"
 else
   echo "using standard frontend"
+fi
+if [ "$useEmbeddedWeb" = true ]; then
+  webVersion="$embeddedWebVersion"
+  echo "using committed embedded frontend: public/dist"
 fi
 
 ldflags="\
@@ -94,6 +107,15 @@ AssertStaticBinary() {
 
   echo "Warning: readelf/file not found, skip static verification for $binary"
   return 0
+}
+
+
+UseEmbeddedWebDist() {
+  if [ ! -f public/dist/index.html ]; then
+    echo "Error: USE_EMBEDDED_WEB is enabled but public/dist/index.html is missing"
+    exit 1
+  fi
+  echo "Using committed public/dist, skip frontend download"
 }
 
 FetchWebRolling() {
@@ -637,7 +659,11 @@ for arg in "$@"; do
 done
 
 if [ "$buildType" = "dev" ]; then
-  FetchWebRolling
+  if [ "$useEmbeddedWeb" = true ]; then
+    UseEmbeddedWebDist
+  else
+    FetchWebRolling
+  fi
   if [ "$dockerType" = "docker" ]; then
     BuildDocker
   elif [ "$dockerType" = "docker-multiplatform" ]; then
@@ -648,7 +674,9 @@ if [ "$buildType" = "dev" ]; then
     BuildDev
   fi
 elif [ "$buildType" = "release" -o "$buildType" = "beta" ]; then
-  if [ "$buildType" = "beta" ]; then
+  if [ "$useEmbeddedWeb" = true ]; then
+    UseEmbeddedWebDist
+  elif [ "$buildType" = "beta" ]; then
     FetchWebRolling
   else
     FetchWebRelease

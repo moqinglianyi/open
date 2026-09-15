@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -19,58 +20,85 @@ import (
 
 func Down(c *gin.Context) {
 	rawPath := c.Request.Context().Value(conf.PathKey).(string)
+	common.LogMediaAccessAuto(c, rawPath)
 	filename := stdpath.Base(rawPath)
 	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if common.ShouldProxy(storage, filename) {
+	// A rendition (the JPEG embedded in a RAW photo) is built here from a few byte
+	// ranges of the original, so it has to be served locally whatever the storage
+	// would normally do with the file itself.
+	linkType := rawLinkType(c, filename)
+	if !op.IsRenditionType(linkType) && common.ShouldProxy(storage, filename) {
 		Proxy(c)
 		return
-	} else {
-		link, _, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
-			IP:       c.ClientIP(),
-			Header:   c.Request.Header,
-			Type:     c.Query("type"),
-			Redirect: true,
-		})
-		if err != nil {
-			common.ErrorPage(c, err, 500)
-			return
-		}
-		redirect(c, link)
 	}
+	link, file, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
+		IP:       c.ClientIP(),
+		Header:   c.Request.Header,
+		Type:     linkType,
+		Redirect: true,
+	})
+	if err != nil {
+		common.ErrorPage(c, err, 500)
+		return
+	}
+	if common.IsGeneratedLink(link) {
+		proxy(c, link, file, storage.GetStorage().ProxyRange)
+		return
+	}
+	if common.ShouldProxy(storage, filename) {
+		// The rendition could not be extracted; fall back to the usual handling.
+		link.Close()
+		Proxy(c)
+		return
+	}
+	redirect(c, link)
 }
 
 func Proxy(c *gin.Context) {
 	rawPath := c.Request.Context().Value(conf.PathKey).(string)
+	common.LogMediaAccessAuto(c, rawPath)
 	filename := stdpath.Base(rawPath)
 	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
 	if err != nil {
 		common.ErrorPage(c, err, 500)
 		return
 	}
-	if canProxy(storage, filename) {
+	// Renditions are small derived images built by this server, so they may be
+	// served even where proxying the file itself is not allowed.
+	linkType := rawLinkType(c, filename)
+	rendition := op.IsRenditionType(linkType)
+	allowed := canProxy(storage, filename)
+	if !allowed && !rendition {
+		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
+		return
+	}
+	if !rendition {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath); url != "" {
 				c.Redirect(302, url)
 				return
 			}
 		}
-		link, file, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
-			Header: c.Request.Header,
-			Type:   c.Query("type"),
-		})
-		if err != nil {
-			common.ErrorPage(c, err, 500)
-			return
-		}
-		proxy(c, link, file, storage.GetStorage().ProxyRange)
-	} else {
-		common.ErrorPage(c, errors.New("proxy not allowed"), 403)
+	}
+	link, file, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
+		Header: c.Request.Header,
+		Type:   linkType,
+	})
+	if err != nil {
+		common.ErrorPage(c, err, 500)
 		return
 	}
+	if !allowed && !common.IsGeneratedLink(link) {
+		// No rendition could be extracted, and streaming the original through the
+		// server is not permitted here: let the client fetch it directly.
+		redirect(c, link)
+		return
+	}
+	proxy(c, link, file, storage.GetStorage().ProxyRange)
 }
 
 func redirect(c *gin.Context, link *model.Link) {

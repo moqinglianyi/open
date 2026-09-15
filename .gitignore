@@ -1,4 +1,4 @@
-.idea/
+﻿.idea/
 .DS_Store
 output/
 /dist/
@@ -28,7 +28,16 @@ output/
 /log/
 /lang/
 /daemon/
-/public/dist/*
-/!public/dist/README.md
 
 .VSCodeCounter
+
+# Keep the modified OpenList frontend build embedded in the backend.
+!/public/dist/
+!/public/dist/**
+
+# Compiled server binaries (exceed GitHub's 100MB file limit; build from source)
+/openlist
+/openlist-linux-*
+/openlist-darwin-*
+/openlist-windows-*
+

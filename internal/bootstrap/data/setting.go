@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -11,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/offline_download/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/rawpreview"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 	"github.com/pkg/errors"
@@ -93,6 +95,10 @@ func initSettings() {
 	}
 }
 
+// rawExtensions is the camera RAW extension list, shared by the image_types
+// default and the RAW preview setting.
+var rawExtensions = strings.Join(rawpreview.DefaultExtensions, ",")
+
 func InitialSettings() []model.SettingItem {
 	var token string
 	if flags.Dev {
@@ -128,7 +134,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.TextTypes, Value: "txt,htm,html,xml,java,properties,sql,js,md,json,conf,ini,vue,php,py,bat,gitignore,yml,go,sh,c,cpp,h,hpp,tsx,vtt,srt,ass,rs,lrc,strm", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
 		{Key: conf.AudioTypes, Value: "mp3,flac,ogg,m4a,wav,opus,wma", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
 		{Key: conf.VideoTypes, Value: "mp4,mkv,avi,mov,rmvb,webm,flv,m3u8", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
-		{Key: conf.ImageTypes, Value: "jpg,tiff,jpeg,png,gif,bmp,svg,ico,swf,webp,avif", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
+		{Key: conf.ImageTypes, Value: "jpg,tiff,jpeg,png,gif,bmp,svg,ico,swf,webp,avif", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE, Help: `camera RAW extensions are added automatically while raw_preview_enabled is on`},
 		//{Key: conf.OfficeTypes, Value: "doc,docx,xls,xlsx,ppt,pptx", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
 		{Key: conf.ProxyTypes, Value: "m3u8,url", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
 		{Key: conf.ProxyIgnoreHeaders, Value: "authorization,referer", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
@@ -162,6 +168,14 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.ReadMeAutoRender, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW},
 		{Key: conf.FilterReadMeScripts, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW}, // frontend
 		{Key: conf.NonEFSZipEncoding, Value: "IBM437", Type: conf.TypeString, Group: model.PREVIEW},
+		// raw photo preview: cameras embed a JPEG rendition in every RAW file,
+		// which OpenList extracts with range requests so browsers can show it.
+		{Key: conf.RawPreviewEnabled, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW, Flag: model.PRIVATE, Help: `Extract the JPEG rendition embedded in camera RAW files (CR2/CR3/NEF/ARW/RAF/DNG...) so they can be previewed. Only the bytes of that rendition are read, not the whole file.`},
+		{Key: conf.RawPreviewTypes, Value: rawExtensions, Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE, Help: `RAW extensions handled by the embedded preview extractor`},
+		{Key: conf.RawPreviewNegotiate, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW, Flag: model.PRIVATE, Help: `Serve the embedded preview to browsers that ask for an image (Accept: image/*) and the original file to everything else, so the same link works for viewing and downloading`},
+		{Key: conf.RawPreviewThumbSize, Value: "320", Type: conf.TypeNumber, Group: model.PREVIEW, Flag: model.PRIVATE, Help: `long edge, in pixels, of generated RAW thumbnails`},
+		{Key: conf.RawPreviewMaxSize, Value: "24", Type: conf.TypeNumber, Group: model.PREVIEW, Flag: model.PRIVATE, Help: `largest embedded rendition served as a big image, in MiB`},
+		{Key: conf.RawPreviewCacheSize, Value: "64", Type: conf.TypeNumber, Group: model.PREVIEW, Flag: model.PRIVATE, Help: `memory budget for cached RAW thumbnails, in MiB`},
 		// global settings
 		{Key: conf.HideFiles, Value: "/\\/README.md/i", Type: conf.TypeText, Group: model.GLOBAL},
 		{Key: "package_download", Value: "true", Type: conf.TypeBool, Group: model.GLOBAL},

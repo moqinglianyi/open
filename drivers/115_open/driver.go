@@ -104,6 +104,12 @@ func (d *Open115) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	var res []model.Obj
 	pageSize := int64(d.PageSize)
 	offset := int64(0)
+	orderBy := strings.TrimSpace(d.Addition.OrderBy)
+	if orderBy == "" {
+		orderBy = "file_name"
+	}
+	orderDirection := strings.ToLower(strings.TrimSpace(d.Addition.OrderDirection))
+	asc := orderDirection != "desc"
 	for {
 		if err := d.WaitLimit(ctx); err != nil {
 			return nil, err
@@ -112,8 +118,8 @@ func (d *Open115) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 			CID:    dir.GetID(),
 			Limit:  pageSize,
 			Offset: offset,
-			ASC:    d.Addition.OrderDirection == "asc",
-			O:      d.Addition.OrderBy,
+			ASC:    asc,
+			O:      orderBy,
 			// Cur:     1,
 			ShowDir: true,
 		})
