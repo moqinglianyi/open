@@ -1,0 +1,1 @@
+System.register(["./index-legacy-CnhVx1ak.js"],function(e,t){var n,r,c,u,i,o;return{setters:[function(e){n=e.Mi,r=e.Rn,c=e.er,u=e.fn,i=e.ft,o=e.ts}],execute:function(){e("default",()=>{const[e]=c();return o(u,{get loading(){return e.loading},get children(){return o(i,{class:"word-wrap",get children(){return e()?.content},get ext(){return n(r.obj.name)},toc:!0})}})})}}});

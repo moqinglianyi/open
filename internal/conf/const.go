@@ -40,6 +40,14 @@ const (
 	FilterReadMeScripts           = "filter_readme_scripts"
 	NonEFSZipEncoding             = "non_efs_zip_encoding"
 
+	// raw photo preview
+	RawPreviewEnabled   = "raw_preview_enabled"
+	RawPreviewTypes     = "raw_preview_types"
+	RawPreviewNegotiate = "raw_preview_negotiate"
+	RawPreviewThumbSize = "raw_preview_thumb_size"
+	RawPreviewMaxSize   = "raw_preview_max_size"
+	RawPreviewCacheSize = "raw_preview_cache_size"
+
 	// global
 	HideFiles               = "hide_files"
 	CustomizeHead           = "customize_head"

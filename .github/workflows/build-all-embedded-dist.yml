@@ -1,0 +1,132 @@
+﻿name: Build all platforms with embedded frontend
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      web_version:
+        description: "WebVersion embedded into binaries"
+        required: false
+        default: "v4.2.3-dplayer-seek-mobile-nativefullscreen"
+
+permissions:
+  contents: read
+
+env:
+  USE_EMBEDDED_WEB: "1"
+  WEB_VERSION: ${{ inputs.web_version || 'v4.2.3-dplayer-seek-mobile-nativefullscreen' }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  verify-embedded-frontend:
+    name: Verify committed frontend dist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify dist and mobile seek/fullscreen markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f public/dist/index.html
+          test -d public/dist/assets
+          grep -R "art-mobile .art-control-fullscreenWeb" public/dist/assets/*.js
+          grep -R "fullscreenWeb:!" public/dist/assets/*.js
+          grep -R "clientY>=" public/dist/assets/*.js
+          grep -R "clientY<=" public/dist/assets/*.js
+          echo "Committed public/dist contains the mobile native-fullscreen and progress-hitbox fixes."
+
+      - name: Upload frontend dist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: openlist-frontend-dist-embedded
+          path: public/dist/**
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: verify-embedded-frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: standard-windows-darwin-linux
+            args: release
+            install_standard_tools: true
+          - name: linux-musl
+            args: release linux_musl
+            install_standard_tools: false
+          - name: linux-musl-arm
+            args: release linux_musl_arm
+            install_standard_tools: false
+          - name: android
+            args: release android
+            install_standard_tools: false
+          - name: freebsd
+            args: release freebsd
+            install_standard_tools: false
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.4"
+
+      - name: Install common build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl wget jq zip unzip tar xz-utils clang lld
+
+      - name: Install standard release tools
+        if: matrix.install_standard_tools
+        shell: bash
+        run: |
+          sudo snap install zig --classic --beta
+          docker pull crazymax/xgo:latest
+          go install github.com/crazy-max/xgo@latest
+          sudo apt-get install -y upx || true
+
+      - name: Confirm embedded frontend is present before build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f public/dist/index.html
+          grep -R "art-mobile .art-control-fullscreenWeb" public/dist/assets/*.js >/dev/null
+          grep -R "fullscreenWeb:!" public/dist/assets/*.js >/dev/null
+
+      - name: Build binaries from committed public/dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x build.sh wrapper/* || true
+          bash build.sh ${{ matrix.args }}
+
+      - name: Upload compressed binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: openlist-${{ matrix.name }}
+          path: build/compress/*
+          if-no-files-found: error
+          compression-level: 0
