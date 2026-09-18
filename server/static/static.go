@@ -123,9 +123,10 @@ func UpdateIndex() {
 	}
 	conf.ManageHtml = replaceStrings(conf.RawIndexHtml, replaceMap1)
 	utils.Log.Debug("Applying replacements for manage pages...")
+	// builtin customization is always injected; admin settings content is appended after it
 	replaceMap2 := map[string]string{
-		"<!-- customize head -->": customizeHead,
-		"<!-- customize body -->": customizeBody,
+		"<!-- customize head -->": builtinCustomizeHead + "\n" + customizeHead,
+		"<!-- customize body -->": builtinCustomizeBody + "\n" + customizeBody,
 	}
 	conf.IndexHtml = replaceStrings(conf.ManageHtml, replaceMap2)
 	utils.Log.Debug("Index.html update completed")
