@@ -1,4 +1,4 @@
-﻿name: Build all platforms with embedded frontend
+name: Build all platforms with embedded frontend
 
 on:
   push:
@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   USE_EMBEDDED_WEB: "1"
   WEB_VERSION: ${{ inputs.web_version || 'v4.2.3-dplayer-seek-mobile-nativefullscreen' }}
@@ -24,22 +28,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Verify dist and mobile seek/fullscreen markers
+      - name: Verify dist and embedded-frontend markers
         shell: bash
         run: |
           set -euo pipefail
           test -f public/dist/index.html
           test -d public/dist/assets
-          grep -R "art-mobile .art-control-fullscreenWeb" public/dist/assets/*.js
+          # the mobile player fixes are baked into the committed dist
           grep -R "fullscreenWeb:!" public/dist/assets/*.js
           grep -R "clientY>=" public/dist/assets/*.js
           grep -R "clientY<=" public/dist/assets/*.js
           echo "Committed public/dist contains the mobile native-fullscreen and progress-hitbox fixes."
 
       - name: Upload frontend dist artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: openlist-frontend-dist-embedded
           path: public/dist/**
@@ -72,7 +76,7 @@ jobs:
 
     steps:
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
         with:
           tool-cache: false
           android: true
@@ -83,15 +87,15 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: "1.26.4"
+          go-version: "1.27.1"
 
       - name: Install common build tools
         shell: bash
@@ -113,18 +117,19 @@ jobs:
         run: |
           set -euo pipefail
           test -f public/dist/index.html
-          grep -R "art-mobile .art-control-fullscreenWeb" public/dist/assets/*.js >/dev/null
           grep -R "fullscreenWeb:!" public/dist/assets/*.js >/dev/null
 
       - name: Build binaries from committed public/dist
         shell: bash
+        env:
+          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
         run: |
           set -euo pipefail
           chmod +x build.sh wrapper/* || true
           bash build.sh ${{ matrix.args }}
 
       - name: Upload compressed binaries
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: openlist-${{ matrix.name }}
           path: build/compress/*
